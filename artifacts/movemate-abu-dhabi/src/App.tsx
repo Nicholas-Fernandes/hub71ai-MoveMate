@@ -11,6 +11,7 @@ import type { MovePlan, MoveProfile, MoveTask } from '@workspace/api-client-reac
 import { answerChat as answerChatLocally, extractProfile as extractProfileLocally, generatePlan as generatePlanLocally } from '../../api-server/src/lib/movemate';
 import mascot from './assets/movemate-mascot.png';
 import DemoModules from './components/demo-modules';
+import { demoNarration } from './lib/voice-narration';
 
 type Profile = {
   name: string; nationality: string; jobStatus: 'offer' | 'no-offer' | ''; salaryRange: string;
@@ -31,7 +32,7 @@ const salaries = ['Under AED 10,000', 'AED 10,000–20,000', 'AED 20,000–30,00
 const taskPriorityOrder: Record<MoveTask['priority'], number> = { high: 0, medium: 1, low: 2 };
 const taskScoreWeights: Record<MoveTask['category'], number> = { visa: 25, housing: 20, job: 20, bank: 10, 'id-medical': 10, community: 10, sim: 5 };
 const SCORE_INCREMENT = 5;
-const VOICE_KEY = 'movemate-voice-enabled-v2';
+const VOICE_KEY = 'movemate-voice-enabled-v3';
 const ASSISTANT_POSITION_KEY = 'movemate-assistant-position-v1';
 const maleVoiceNames = /\b(male|david|daniel|james|george|mark|guy|alex|oliver|ryan|matthew|aaron|tom)\b/i;
 let speechRequestId = 0;
@@ -40,38 +41,55 @@ function saveVoiceSetting(enabled: boolean) { try { localStorage.setItem(VOICE_K
 function prepareSpeechFromGesture() { try { window.speechSynthesis?.resume(); } catch { /* The browser may not expose speech output. */ } }
 function readAssistantPosition(): { x: number; y: number } | null { try { const value = JSON.parse(localStorage.getItem(ASSISTANT_POSITION_KEY) ?? 'null'); return value && Number.isFinite(value.x) && Number.isFinite(value.y) ? value : null; } catch { return null; } }
 function addressQuestion(name: string, question: string) { return name ? `${name}, ${question.charAt(0).toLowerCase()}${question.slice(1)}` : question; }
+let narrationAudio: HTMLAudioElement | null = null;
+let finishSpeech: (() => void) | null = null;
+function stopMoveMateSpeech() {
+  ++speechRequestId;
+  window.speechSynthesis?.cancel();
+  if (narrationAudio) { narrationAudio.pause(); narrationAudio.onplaying = null; narrationAudio.onended = null; narrationAudio.onerror = null; }
+  finishSpeech?.(); finishSpeech = null;
+}
+function recordedNarration(text: string) {
+  const patterns: [RegExp, string][] = [
+    [/what should we call you/i, 'welcome'], [/where are you moving from/i, 'country'],
+    [/do you have a job offer/i, 'job'], [/what salary range/i, 'salary'],
+    [/how are you making the move/i, 'family'], [/who will be joining/i, 'household'],
+    [/how far along/i, 'arrival'], [/when do you expect to arrive/i, 'date'],
+    [/where will you commute/i, 'housing'], [/monthly rent budget/i, 'budget'],
+    [/what should i optimize/i, 'commute'], [/based on what you shared.*al reem/i, 'central'],
+    [/point you to the bank guide/i, 'bank'], [/well done/i, 'celebrate'],
+    [/speak my replies/i, 'voice'],
+  ];
+  return patterns.find(([pattern]) => pattern.test(text))?.[1];
+}
 function sayMoveMate(text: string, enabled: boolean, onSpeaking: (speaking: boolean) => void) {
-  if (!enabled || typeof window === 'undefined' || !('speechSynthesis' in window)) { onSpeaking(false); return; }
+  stopMoveMateSpeech();
+  if (!enabled) { onSpeaking(false); return; }
+  const requestId = speechRequestId;
+  finishSpeech = () => onSpeaking(false);
+  const playRecording = (key: string) => {
+    if (requestId !== speechRequestId) return;
+    window.speechSynthesis?.cancel();
+    const audio = narrationAudio ?? (narrationAudio = new Audio());
+    audio.src = demoNarration[key]; audio.volume = 1; audio.muted = false;
+    audio.onplaying = () => { if (requestId === speechRequestId) onSpeaking(true); };
+    audio.onended = audio.onerror = () => { if (requestId === speechRequestId) onSpeaking(false); };
+    void audio.play().catch(() => onSpeaking(false));
+  };
+  const recorded = recordedNarration(text);
+  if (recorded) { playRecording(recorded); return; }
   const synthesis = window.speechSynthesis;
-  const requestId = ++speechRequestId;
-  synthesis.cancel();
+  const voices = synthesis?.getVoices().filter(voice => voice.lang.toLowerCase().startsWith('en')) ?? [];
+  if (!voices.length) { playRecording('generic'); return; }
   const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = 'en-GB';
-  const chooseVoice = () => {
-    const voices = synthesis.getVoices().filter(voice => voice.lang.toLowerCase().startsWith('en'));
-    const voice = voices.find(item => maleVoiceNames.test(item.name)) ?? voices.find(item => /en-GB/i.test(item.lang)) ?? voices[0];
-    if (voice) utterance.voice = voice;
-  };
-  utterance.rate = 0.94;
-  utterance.pitch = 0.88;
-  utterance.onstart = () => onSpeaking(true);
-  utterance.onend = () => onSpeaking(false);
-  utterance.onerror = () => onSpeaking(false);
-  let spoke = false;
-  const speak = () => {
-    if (requestId !== speechRequestId || spoke) return;
-    spoke = true;
-    chooseVoice();
-    try {
-      synthesis.resume();
-      synthesis.speak(utterance);
-    } catch { onSpeaking(false); }
-  };
-  if (synthesis.getVoices().length) speak();
-  else {
-    synthesis.addEventListener('voiceschanged', speak, { once: true });
-    window.setTimeout(() => { synthesis.removeEventListener('voiceschanged', speak); speak(); }, 350);
-  }
+  utterance.voice = voices.find(voice => maleVoiceNames.test(voice.name)) ?? voices[0];
+  utterance.rate = 0.94; utterance.pitch = 0.88;
+  let started = false;
+  utterance.onstart = () => { started = true; if (requestId === speechRequestId) onSpeaking(true); };
+  utterance.onend = () => { if (requestId === speechRequestId) onSpeaking(false); };
+  utterance.onerror = () => { if (requestId === speechRequestId) playRecording('generic'); };
+  synthesis.speak(utterance);
+  window.setTimeout(() => { if (!started && requestId === speechRequestId) playRecording('generic'); }, 1200);
 }
 const questionCopy: Record<string, { kicker: string; title: string; help: string }> = {
   name: { kicker: 'A good place to begin', title: 'What should we call you?', help: 'I’m MoveMate, your guide through this process.' },
@@ -259,7 +277,7 @@ function Onboarding() {
   const companionLine = currentStep === 'name'
     ? profile.name.trim() ? `Hi ${profile.name.trim()}! I’m MoveMate, your guide through this process.` : 'I’m MoveMate, your guide through this process.'
     : currentStep === 'nationality' ? copy.title : addressQuestion(profile.name, copy.title);
-  return <main className="app-shell"><Header onboarding /><div className="page-wrap"><div className="onboard-layout"><aside className="intro-side"><div className="eyebrow">A more human move</div><h1 className="intro-title">Make room for<br />your <em>next chapter.</em></h1><p className="intro-copy">Moving countries is a lot. We’ll make the first steps feel a little more like yours.</p><div className="onboard-companion"><div className={`onboard-character${companionSpeaking ? ' mascot-speaking' : ''}`}><img src={mascot} alt="MoveMate character" /></div><div className="companion-speech"><span>MoveMate</span><p key={currentStep}>{companionLine}</p></div><button className="voice-toggle" type="button" onClick={() => { const next = !voiceEnabled; setVoiceEnabled(next); saveVoiceSetting(next); if (!next) { window.speechSynthesis?.cancel(); setCompanionSpeaking(false); } else sayMoveMate(companionLine, true, setCompanionSpeaking); }} aria-label={voiceEnabled ? 'Turn MoveMate voice off' : 'Turn MoveMate voice on'} title={voiceEnabled ? 'Voice on' : 'Voice off'}>{voiceEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}</button></div><div className="postmark" aria-hidden="true"><div className="postmark-inner">A new home<br />is on the horizon<br />your next chapter</div></div></aside><section className="form-card" aria-live="polite"><div className="form-content"><div className="progress-line"><div className="progress-track"><div className="progress-fill" style={{ width: `${((stepIndex + 1) / steps.length) * 100}%` }} /></div><div className="progress-label" data-testid="text-onboarding-progress">{stepIndex + 1} of {steps.length}</div></div><div className="question-kicker">{copy.kicker}</div><h2 className="question-title" data-testid="text-onboarding-question">{copy.title}</h2><p className="question-help">{copy.help}</p>
+  return <main className="app-shell"><Header onboarding /><div className="page-wrap"><div className="onboard-layout"><aside className="intro-side"><div className="eyebrow">A more human move</div><h1 className="intro-title">Make room for<br />your <em>next chapter.</em></h1><p className="intro-copy">Moving countries is a lot. We’ll make the first steps feel a little more like yours.</p><div className="onboard-companion"><div className={`onboard-character${companionSpeaking ? ' mascot-speaking' : ''}`}><img src={mascot} alt="MoveMate character" /></div><div className="companion-speech"><span>MoveMate</span><p key={currentStep}>{companionLine}</p></div><button className="voice-toggle" type="button" onClick={() => { if (companionSpeaking) { stopMoveMateSpeech(); setVoiceEnabled(false); saveVoiceSetting(false); } else { setVoiceEnabled(true); saveVoiceSetting(true); sayMoveMate(companionLine, true, setCompanionSpeaking); } }} aria-label={companionSpeaking ? 'Stop MoveMate voice' : 'Play MoveMate voice'} title="Play or stop narration">{companionSpeaking ? <VolumeX size={16} /> : <Volume2 size={16} />}<span>{companionSpeaking ? 'Stop' : 'Play voice'}</span></button></div><div className="postmark" aria-hidden="true"><div className="postmark-inner">A new home<br />is on the horizon<br />your next chapter</div></div></aside><section className="form-card" aria-live="polite"><div className="form-content"><div className="progress-line"><div className="progress-track"><div className="progress-fill" style={{ width: `${((stepIndex + 1) / steps.length) * 100}%` }} /></div><div className="progress-label" data-testid="text-onboarding-progress">{stepIndex + 1} of {steps.length}</div></div><div className="question-kicker">{copy.kicker}</div><h2 className="question-title" data-testid="text-onboarding-question">{copy.title}</h2><p className="question-help">{copy.help}</p>
   {currentStep === 'name' && <div><label className="field-label" htmlFor="name">Your first name</label><input id="name" className="text-field" placeholder="For example, Maya" value={profile.name} onChange={e => update('name', e.target.value)} onKeyDown={e => { if (e.key === 'Enter') continueFlow(); }} data-testid="input-name" autoComplete="given-name" /></div>}
   {currentStep === 'nationality' && <div><label className="field-label" htmlFor="nationality">Country you’re moving from</label><div style={{ position: 'relative' }}><select id="nationality" className="select-field" value={profile.nationality} onChange={e => update('nationality', e.target.value)} data-testid="select-nationality"><option value="">Select a country</option>{countries.map(country => <option key={country} value={country}>{country}</option>)}</select><ChevronDown size={17} style={{ position: 'absolute', right: 16, top: 18, pointerEvents: 'none', color: '#7a887f' }} /></div><div className="field-hint">We use this only to personalize your local preparation.</div></div>}
   {currentStep === 'job' && <div className="option-grid"><Option title="Yes, I have an offer" subtitle="I’m preparing to start a role" selected={profile.jobStatus === 'offer'} testId="option-job-offer" onClick={() => selectAnswer('jobStatus', 'offer')} /><Option title="Not yet" subtitle="I’m still exploring work options" selected={profile.jobStatus === 'no-offer'} testId="option-job-no-offer" onClick={() => selectAnswer('jobStatus', 'no-offer')} /></div>}
@@ -289,7 +307,7 @@ function ChatBubble({ item, animate, onSpeakingChange, voiceEnabled }: { item: C
     }
     let nextLength = 0;
     const step = Math.max(1, Math.ceil(item.text.length / 130));
-    const useVoice = voiceEnabled && item.role === 'assistant' && typeof window !== 'undefined' && 'speechSynthesis' in window;
+    const useVoice = voiceEnabled && item.role === 'assistant';
     if (useVoice) sayMoveMate(item.text, true, onSpeakingChange);
     else onSpeakingChange(false);
     const timer = window.setInterval(() => {
@@ -302,7 +320,7 @@ function ChatBubble({ item, animate, onSpeakingChange, voiceEnabled }: { item: C
     }, 18);
     return () => {
       window.clearInterval(timer);
-      if (useVoice) window.speechSynthesis.cancel();
+      if (useVoice) stopMoveMateSpeech();
       if (animate) onSpeakingChange(false);
     };
   }, [animate, item.text, onSpeakingChange, voiceEnabled]);
@@ -492,7 +510,7 @@ function Dashboard() {
   <div className="privacy-note" data-testid="text-privacy-note"><ShieldCheck size={14} />Your plan is saved in this browser. Don’t share passwords, ID numbers, or bank account details in chat.</div></div>
   {celebration && <div key={celebration.id} className="task-celebration" aria-live="polite" aria-label={`${celebration.title} complete`}><span className="celebration-message"><Sparkles size={16} />Step complete! <strong>{celebration.title}</strong></span>{Array.from({ length: 28 }, (_, index) => <i key={index} className="confetti-piece" style={{ '--confetti-index': index, '--confetti-x': `${((index * 47) % 190) - 95}px`, '--confetti-rotation': `${(index * 71) % 360}deg` } as CSSProperties} />)}</div>}
   {helpTopic && <div className="guide-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setHelpTopic(null); }}><section className="guide-dialog" role="dialog" aria-modal="true" aria-labelledby="guide-title"><button className="guide-close" type="button" onClick={() => setHelpTopic(null)} aria-label="Close guide"><X size={18} /></button><div className="guide-avatar"><img src={mascot} alt="" /></div><span className="phase-label">MoveMate, let’s work it out</span>{helpTopic === 'housing' ? <><h2 id="guide-title">Build a home shortlist that fits you</h2><p>Start with three details. I can use them to help compare areas and viewing options with you.</p><ol className="guide-steps"><li><strong>Where will you commute?</strong><span>Share a work or school area, if you know it.</span></li><li><strong>What rent feels comfortable?</strong><span>Choose a monthly budget and whether you need furnished accommodation.</span></li><li><strong>What matters day to day?</strong><span>Set your commute limit, household needs, and access to shops or transit.</span></li><li><strong>Compare before you book.</strong><span>Shortlist a few areas, ask about viewing availability, and confirm tenancy and Tawtheeq details before paying.</span></li></ol></> : <><h2 id="guide-title">Find an approved screening centre</h2><p>SEHA’s Disease Prevention &amp; Screening Centres provide residence visa medical screening. A listed Abu Dhabi centre is at Hazza Bin Zayed Street, near Sheikh Khalifa Medical City.</p><div className="guide-fact"><strong>Regular visa screening</strong><span>The official page currently lists AED 250 for standard screening and results within 48 hours or earlier by SMS. Requirements and fees can change; confirm before visiting.</span></div><div className="guide-fact"><strong>Listed hours at the Abu Dhabi centre</strong><span>Regular screening: Monday–Friday 7am–7pm, Sunday 8am–5pm. Check last application times and appointment requirements first.</span></div><div className="guide-links"><a href="https://dpsc.seha.ae/EN-US/Services/Pages/visascreening.aspx" target="_blank" rel="noreferrer">Screening service details <ExternalLink size={13} /></a><a href="https://dpsc.seha.ae/EN-US/Centers/Pages/AbuDhabi.aspx" target="_blank" rel="noreferrer">Abu Dhabi centre and hours <ExternalLink size={13} /></a></div></>}<button className="guide-ask-button" type="button" onClick={() => askAboutHelp(helpTopic)}>Ask MoveMate to guide me <ArrowRight size={15} /></button></section></div>}
-  <div className="assistant-shell" style={assistantStyle}>{chatOpen && <section className={`chat-panel${assistantPosition ? ' is-floating' : ''}`} style={floatingPanelStyle} aria-label="MoveMate assistant" data-testid="panel-assistant-chat"><header className="chat-header"><div className={`chat-avatar${assistantSpeaking ? ' mascot-speaking' : ''}`}><img src={mascot} alt="" /></div><div><strong>Your MoveMate</strong><span>{aiPowered ? 'GPT-6 Luna · here with you' : 'Your move guide · demo mode'}</span></div>{assistantPosition && <button type="button" onClick={restoreAssistantPosition} aria-label="Move MoveMate back to the corner" title="Return MoveMate to the corner"><Move size={15} /></button>}<button type="button" className="chat-voice-toggle" onClick={() => { const next = !voiceEnabled; setVoiceEnabled(next); saveVoiceSetting(next); if (!next) { window.speechSynthesis?.cancel(); setAssistantSpeaking(false); } else sayMoveMate('I’ll speak my replies out loud.', true, setAssistantSpeaking); }} aria-label={voiceEnabled ? 'Turn MoveMate voice off' : 'Turn MoveMate voice on'} title={voiceEnabled ? 'Voice on' : 'Voice off'}>{voiceEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}</button><button onClick={() => setChatOpen(false)} aria-label="Close assistant" data-testid="button-close-assistant"><X size={17} /></button></header><div className="chat-body" aria-live="polite"><div className="assistant-welcome"><span className={`welcome-mascot${assistantSpeaking ? ' mascot-speaking' : ''}`}><img src={mascot} alt="" /></span><div>What would you like help with?</div></div>{history.map((item, i) => <div key={`${i}-${item.role}`} data-testid={`chat-message-${i}`}><ChatBubble item={item} animate={item.role === 'assistant' && i === latestAssistantIndex} onSpeakingChange={setAssistantSpeaking} voiceEnabled={voiceEnabled} /></div>)}{chatMutation.isPending && <div className="chat-loading" data-testid="status-chat-loading"><span /><span /><span />Putting together a helpful answer</div>}{chatError && <div className="chat-error" role="alert" data-testid="status-chat-error">{chatError}<button onClick={() => void submitChat()} data-testid="button-retry-chat">Retry</button></div>}{!history.length && <div className="quick-prompts">{quickPrompts.map((prompt, i) => <button key={prompt} onClick={() => void submitChat(prompt)} disabled={chatMutation.isPending} data-testid={`button-quick-prompt-${i}`}>{prompt}<ArrowRight size={13} /></button>)}</div>}</div><div className="chat-caption">{aiPowered === true ? 'GPT-6 Luna · chat and move context are sent to OpenAI' : aiPowered === false ? 'Demo guide · add OPENAI_API_KEY as a server secret for GPT-6 Luna' : 'Checking MoveMate guide status'}</div><form className="chat-composer" onSubmit={e => { e.preventDefault(); void submitChat(); }}><input value={message} onChange={e => setMessage(e.target.value)} placeholder="Ask about your move…" aria-label="Message MoveMate" data-testid="input-chat-message" /><button type="submit" disabled={!message.trim() || chatMutation.isPending} aria-label="Send message" data-testid="button-send-chat"><Send size={17} /></button></form></section>}<button className={`assistant-launcher${chatOpen ? ' is-open' : ''}${assistantSpeaking ? ' mascot-speaking' : ''}`} onPointerDown={startAssistantDrag} onPointerMove={moveAssistant} onPointerUp={finishAssistantDrag} onPointerCancel={finishAssistantDrag} onClick={() => { if (dragState.current?.moved) { dragState.current = null; return; } setChatOpen(open => !open); }} aria-label={chatOpen ? 'Close MoveMate assistant or drag to move' : 'Open MoveMate assistant or drag to move'} title="Drag MoveMate to reposition; click to open" aria-expanded={chatOpen} data-testid="button-open-assistant">{chatOpen ? <X size={20} /> : <><img src={mascot} alt="MoveMate mascot" data-testid="img-assistant-mascot" /><span className="assistant-dot" /></>}</button></div>
+  <div className="assistant-shell" style={assistantStyle}>{chatOpen && <section className={`chat-panel${assistantPosition ? ' is-floating' : ''}`} style={floatingPanelStyle} aria-label="MoveMate assistant" data-testid="panel-assistant-chat"><header className="chat-header"><div className={`chat-avatar${assistantSpeaking ? ' mascot-speaking' : ''}`}><img src={mascot} alt="" /></div><div><strong>Your MoveMate</strong><span>{aiPowered ? 'GPT-6 Luna · here with you' : 'Your move guide · demo mode'}</span></div>{assistantPosition && <button type="button" onClick={restoreAssistantPosition} aria-label="Move MoveMate back to the corner" title="Return MoveMate to the corner"><Move size={15} /></button>}<button type="button" className="chat-voice-toggle" onClick={() => { if (assistantSpeaking) { stopMoveMateSpeech(); setVoiceEnabled(false); saveVoiceSetting(false); } else { setVoiceEnabled(true); saveVoiceSetting(true); sayMoveMate(history.filter(item => item.role === 'assistant').at(-1)?.text ?? 'I’ll speak my replies out loud.', true, setAssistantSpeaking); } }} aria-label={assistantSpeaking ? 'Stop MoveMate voice' : 'Play MoveMate voice'} title="Play or stop narration">{assistantSpeaking ? <VolumeX size={16} /> : <Volume2 size={16} />}<span>{assistantSpeaking ? 'Stop' : 'Play voice'}</span></button><button onClick={() => setChatOpen(false)} aria-label="Close assistant" data-testid="button-close-assistant"><X size={17} /></button></header><div className="chat-body" aria-live="polite"><div className="assistant-welcome"><span className={`welcome-mascot${assistantSpeaking ? ' mascot-speaking' : ''}`}><img src={mascot} alt="" /></span><div>What would you like help with?</div></div>{history.map((item, i) => <div key={`${i}-${item.role}`} data-testid={`chat-message-${i}`}><ChatBubble item={item} animate={item.role === 'assistant' && i === latestAssistantIndex} onSpeakingChange={setAssistantSpeaking} voiceEnabled={voiceEnabled} /></div>)}{chatMutation.isPending && <div className="chat-loading" data-testid="status-chat-loading"><span /><span /><span />Putting together a helpful answer</div>}{chatError && <div className="chat-error" role="alert" data-testid="status-chat-error">{chatError}<button onClick={() => void submitChat()} data-testid="button-retry-chat">Retry</button></div>}{!history.length && <div className="quick-prompts">{quickPrompts.map((prompt, i) => <button key={prompt} onClick={() => void submitChat(prompt)} disabled={chatMutation.isPending} data-testid={`button-quick-prompt-${i}`}>{prompt}<ArrowRight size={13} /></button>)}</div>}</div><div className="chat-caption">{aiPowered === true ? 'GPT-6 Luna · chat and move context are sent to OpenAI' : aiPowered === false ? 'Demo guide · add OPENAI_API_KEY as a server secret for GPT-6 Luna' : 'Checking MoveMate guide status'}</div><form className="chat-composer" onSubmit={e => { e.preventDefault(); void submitChat(); }}><input value={message} onChange={e => setMessage(e.target.value)} placeholder="Ask about your move…" aria-label="Message MoveMate" data-testid="input-chat-message" /><button type="submit" disabled={!message.trim() || chatMutation.isPending} aria-label="Send message" data-testid="button-send-chat"><Send size={17} /></button></form></section>}<button className={`assistant-launcher${chatOpen ? ' is-open' : ''}${assistantSpeaking ? ' mascot-speaking' : ''}`} onPointerDown={startAssistantDrag} onPointerMove={moveAssistant} onPointerUp={finishAssistantDrag} onPointerCancel={finishAssistantDrag} onClick={() => { if (dragState.current?.moved) { dragState.current = null; return; } setChatOpen(open => !open); }} aria-label={chatOpen ? 'Close MoveMate assistant or drag to move' : 'Open MoveMate assistant or drag to move'} title="Drag MoveMate to reposition; click to open" aria-expanded={chatOpen} data-testid="button-open-assistant">{chatOpen ? <X size={20} /> : <><img src={mascot} alt="MoveMate mascot" data-testid="img-assistant-mascot" /><span className="assistant-dot" /></>}</button></div>
   </main>;
 }
 function RoutedErrorBoundary({ children }: { children: ReactNode }) { const [location] = useLocation(); return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>; }
