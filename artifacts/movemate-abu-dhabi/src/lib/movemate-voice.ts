@@ -62,8 +62,33 @@ export function sayMoveMate(text: string, enabled: boolean, onSpeaking: (value: 
     player.onerror = () => { if (current()) { onSpeaking(false); report('Audio unavailable · open this link in Chrome or Safari'); } };
     void player.play().catch(() => { if (current()) { onSpeaking(false); report('Audio blocked · tap Play voice to enable sound'); } });
   };
-  // Demo playback starts immediately; browser speech remains explicitly testable.
-  if (!preferBrowser) { fallback('Demo voice ready'); return; }
+  if (!preferBrowser) {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 14000);
+    cleanups.push(() => { controller.abort(); window.clearTimeout(timer); });
+    const player = audio ?? (audio = new Audio());
+    // Unlock this same media element during the click before awaiting audio.
+    const silent = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+    player.src = silent;
+    void player.play().catch(() => {});
+    report('Generating OpenAI voice · AI-generated audio');
+    void fetch('/api/speech', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: text.slice(0, 2400) }), signal: controller.signal })
+      .then(async response => {
+        if (!response.ok) throw new Error('Speech unavailable');
+        const blob = await response.blob();
+        if (!current() || fallbackStarted) return;
+        window.clearTimeout(timer);
+        const url = URL.createObjectURL(blob);
+        cleanups.push(() => URL.revokeObjectURL(url));
+        player.src = url; player.volume = 1; player.muted = false;
+        player.onplaying = () => { if (current()) { onSpeaking(true); report('OpenAI voice · AI-generated audio'); } };
+        player.onended = () => { if (current()) { onSpeaking(false); report('OpenAI voice ready · AI-generated audio'); } };
+        player.onerror = () => { if (current()) fallback('OpenAI audio could not play'); };
+        await player.play();
+      })
+      .catch(() => { if (current()) fallback('OpenAI voice unavailable'); });
+    return;
+  }
   const synth = window.speechSynthesis;
   if (!synth || typeof SpeechSynthesisUtterance === 'undefined') { fallback('Browser speech unavailable'); return; }
   // Short chunks keep lengthy replies from stalling on device speech engines.

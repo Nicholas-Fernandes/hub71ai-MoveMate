@@ -36,6 +36,20 @@ async function handleApi(request: Request, env: WorkerEnv) {
     return json({ error: "Request body must be valid JSON" }, 400);
   }
 
+  if (pathname === "/api/speech") {
+    if (typeof body.text !== "string" || !body.text.trim() || body.text.length > 2400) return json({ error: "Speech text must be between 1 and 2400 characters" }, 400);
+    if (!env.OPENAI_API_KEY?.trim()) return json({ error: "Voice is not configured" }, 503);
+    try {
+      const speech = await fetch("https://api.openai.com/v1/audio/speech", {
+        method: "POST",
+        headers: { authorization: `Bearer ${env.OPENAI_API_KEY.trim()}`, "content-type": "application/json" },
+        body: JSON.stringify({ model: "gpt-4o-mini-tts", voice: "onyx", input: body.text, response_format: "mp3", instructions: "Speak warmly and clearly as a helpful male relocation companion. Use a relaxed conversational pace." }),
+        signal: AbortSignal.timeout(12_000),
+      });
+      if (!speech.ok) return json({ error: "OpenAI speech unavailable", upstreamStatus: speech.status }, 502);
+      return new Response(speech.body, { headers: { "content-type": "audio/mpeg", "cache-control": "no-store" } });
+    } catch { return json({ error: "Speech request timed out" }, 504); }
+  }
   if (pathname === "/api/extract-profile") {
     if (typeof body.text !== "string") return json({ error: "Profile text is required" }, 400);
     return json(extractProfile(body.text, body.answers));
