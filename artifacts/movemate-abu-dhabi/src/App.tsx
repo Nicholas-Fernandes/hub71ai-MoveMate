@@ -31,29 +31,47 @@ const salaries = ['Under AED 10,000', 'AED 10,000–20,000', 'AED 20,000–30,00
 const taskPriorityOrder: Record<MoveTask['priority'], number> = { high: 0, medium: 1, low: 2 };
 const taskScoreWeights: Record<MoveTask['category'], number> = { visa: 25, housing: 20, job: 20, bank: 10, 'id-medical': 10, community: 10, sim: 5 };
 const SCORE_INCREMENT = 5;
-const VOICE_KEY = 'movemate-voice-enabled-v1';
+const VOICE_KEY = 'movemate-voice-enabled-v2';
 const ASSISTANT_POSITION_KEY = 'movemate-assistant-position-v1';
 const maleVoiceNames = /\b(male|david|daniel|james|george|mark|guy|alex|oliver|ryan|matthew|aaron|tom)\b/i;
+let speechRequestId = 0;
 function readVoiceSetting() { try { return localStorage.getItem(VOICE_KEY) !== 'false'; } catch { return true; } }
 function saveVoiceSetting(enabled: boolean) { try { localStorage.setItem(VOICE_KEY, String(enabled)); } catch { /* Voice preference is optional. */ } }
+function prepareSpeechFromGesture() { try { window.speechSynthesis?.resume(); } catch { /* The browser may not expose speech output. */ } }
 function readAssistantPosition(): { x: number; y: number } | null { try { const value = JSON.parse(localStorage.getItem(ASSISTANT_POSITION_KEY) ?? 'null'); return value && Number.isFinite(value.x) && Number.isFinite(value.y) ? value : null; } catch { return null; } }
 function addressQuestion(name: string, question: string) { return name ? `${name}, ${question.charAt(0).toLowerCase()}${question.slice(1)}` : question; }
 function sayMoveMate(text: string, enabled: boolean, onSpeaking: (speaking: boolean) => void) {
   if (!enabled || typeof window === 'undefined' || !('speechSynthesis' in window)) { onSpeaking(false); return; }
   const synthesis = window.speechSynthesis;
+  const requestId = ++speechRequestId;
   synthesis.cancel();
-  onSpeaking(true);
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = 'en-GB';
-  const voices = synthesis.getVoices().filter(voice => voice.lang.toLowerCase().startsWith('en'));
-  utterance.voice = voices.find(voice => maleVoiceNames.test(voice.name)) ?? voices.find(voice => /en-GB/i.test(voice.lang)) ?? voices[0] ?? null;
+  const chooseVoice = () => {
+    const voices = synthesis.getVoices().filter(voice => voice.lang.toLowerCase().startsWith('en'));
+    const voice = voices.find(item => maleVoiceNames.test(item.name)) ?? voices.find(item => /en-GB/i.test(item.lang)) ?? voices[0];
+    if (voice) utterance.voice = voice;
+  };
   utterance.rate = 0.94;
   utterance.pitch = 0.88;
   utterance.onstart = () => onSpeaking(true);
   utterance.onend = () => onSpeaking(false);
   utterance.onerror = () => onSpeaking(false);
-  if (synthesis.paused) synthesis.resume();
-  synthesis.speak(utterance);
+  let spoke = false;
+  const speak = () => {
+    if (requestId !== speechRequestId || spoke) return;
+    spoke = true;
+    chooseVoice();
+    try {
+      synthesis.resume();
+      synthesis.speak(utterance);
+    } catch { onSpeaking(false); }
+  };
+  if (synthesis.getVoices().length) speak();
+  else {
+    synthesis.addEventListener('voiceschanged', speak, { once: true });
+    window.setTimeout(() => { synthesis.removeEventListener('voiceschanged', speak); speak(); }, 350);
+  }
 }
 const questionCopy: Record<string, { kicker: string; title: string; help: string }> = {
   name: { kicker: 'A good place to begin', title: 'What should we call you?', help: 'I’m MoveMate, your guide through this process.' },
@@ -214,6 +232,7 @@ function Onboarding() {
   }
   function continueFlow() {
     const issue = valid(); if (issue) { setError(issue); return; }
+    prepareSpeechFromGesture();
     const index = steps.indexOf(currentStep);
     if (index < steps.length - 1) {
       const nextStep = steps[index + 1];
@@ -223,7 +242,7 @@ function Onboarding() {
     } else void finish();
   }
   function back() { setError(''); if (stepIndex > 0) setStep(steps[stepIndex - 1]); }
-  function selectAnswer(key: 'jobStatus' | 'familyStatus' | 'arrivalStatus', value: 'offer' | 'no-offer' | 'alone' | 'others' | 'date' | 'visa') { update(key, value as never); window.setTimeout(() => { const nextProfile = { ...profile, [key]: value }; const nextSteps = getSteps(nextProfile); const index = nextSteps.indexOf(currentStep); if (index < nextSteps.length - 1) { const nextStep = nextSteps[index + 1]; setStep(nextStep); const nextCopy = nextStep === 'household' ? 'Who will be joining you?' : questionCopy[nextStep]?.title ?? 'Let’s keep going.'; const confirmation = key === 'jobStatus' ? value === 'offer' ? 'Great, I’ll tailor your work and banking prep around your offer.' : 'No problem. I’ll keep the plan useful while you explore roles.' : key === 'familyStatus' ? value === 'alone' ? 'Got it. I’ll shape the plan around a solo move.' : 'Got it. I’ll include the people moving with you.' : value === 'visa' ? 'We’ll make space for visa guidance as we go.' : 'Great, we’ll plan around your arrival date.'; const question = nextStep === 'nationality' ? nextCopy : addressQuestion(profile.name, nextCopy); sayMoveMate(`${confirmation} ${question}`, voiceEnabled, setCompanionSpeaking); } }, 260); }
+  function selectAnswer(key: 'jobStatus' | 'familyStatus' | 'arrivalStatus', value: 'offer' | 'no-offer' | 'alone' | 'others' | 'date' | 'visa') { prepareSpeechFromGesture(); update(key, value as never); window.setTimeout(() => { const nextProfile = { ...profile, [key]: value }; const nextSteps = getSteps(nextProfile); const index = nextSteps.indexOf(currentStep); if (index < nextSteps.length - 1) { const nextStep = nextSteps[index + 1]; setStep(nextStep); const nextCopy = nextStep === 'household' ? 'Who will be joining you?' : questionCopy[nextStep]?.title ?? 'Let’s keep going.'; const confirmation = key === 'jobStatus' ? value === 'offer' ? 'Great, I’ll tailor your work and banking prep around your offer.' : 'No problem. I’ll keep the plan useful while you explore roles.' : key === 'familyStatus' ? value === 'alone' ? 'Got it. I’ll shape the plan around a solo move.' : 'Got it. I’ll include the people moving with you.' : value === 'visa' ? 'We’ll make space for visa guidance as we go.' : 'Great, we’ll plan around your arrival date.'; const question = nextStep === 'nationality' ? nextCopy : addressQuestion(profile.name, nextCopy); sayMoveMate(`${confirmation} ${question}`, voiceEnabled, setCompanionSpeaking); } }, 260); }
   function useDemo() {
     const d = new Date(); d.setDate(d.getDate() + 21);
     const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -270,9 +289,9 @@ function ChatBubble({ item, animate, onSpeakingChange, voiceEnabled }: { item: C
     }
     let nextLength = 0;
     const step = Math.max(1, Math.ceil(item.text.length / 130));
-    const useVoice = voiceEnabled && typeof window !== 'undefined' && 'speechSynthesis' in window;
-    if (item.role === 'assistant' && useVoice) sayMoveMate(item.text, true, onSpeakingChange);
-    else onSpeakingChange(true);
+    const useVoice = voiceEnabled && item.role === 'assistant' && typeof window !== 'undefined' && 'speechSynthesis' in window;
+    if (useVoice) sayMoveMate(item.text, true, onSpeakingChange);
+    else onSpeakingChange(false);
     const timer = window.setInterval(() => {
       nextLength = Math.min(item.text.length, nextLength + step);
       setVisibleLength(nextLength);
@@ -417,6 +436,7 @@ function Dashboard() {
   async function submitChat(text = message) {
     const query = text.trim();
     if (!query || !plan || !structured || chatMutation.isPending) return;
+    prepareSpeechFromGesture();
     setMessage(''); setChatError('');
     const priorHistory = saved.chatHistory ?? [];
     const userHistory = [...priorHistory, { role: 'user' as const, text: query }];
