@@ -1,0 +1,255 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: API specification
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: movemate
+    description: Free, rule-based MoveMate relocation guidance
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+  /extract-profile:
+    post:
+      operationId: extractProfile
+      tags: [movemate]
+      summary: Extract a structured relocation profile from onboarding answers
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExtractProfileInput"
+      responses:
+        "200":
+          description: Structured relocation profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MoveProfile"
+  /generate-plan:
+    post:
+      operationId: generateMovePlan
+      tags: [movemate]
+      summary: Generate a personalized mock relocation plan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateMovePlanInput"
+      responses:
+        "200":
+          description: Profile-aware task plan and first-month cost estimate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MovePlan"
+  /chat:
+    post:
+      operationId: chatWithMoveMate
+      tags: [movemate]
+      summary: Get a free rule-based MoveMate assistant response
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MoveMateChatInput"
+      responses:
+        "200":
+          description: Assistant reply and updated journey state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MoveMateChatResponse"
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+    MoveProfile:
+      type: object
+      properties:
+        name:
+          type: string
+        nationality:
+          type: string
+        jobStatus:
+          type: string
+          enum: [offer, no-offer]
+        salaryRange:
+          type: string
+        familyStatus:
+          type: string
+          enum: [alone, others]
+        adults:
+          type: integer
+          minimum: 1
+        children:
+          type: integer
+          minimum: 0
+        arrivalStatus:
+          type: string
+          enum: [date, visa]
+        arrivalDate:
+          type: [string, "null"]
+        currentCity:
+          type: [string, "null"]
+      required:
+        - name
+        - nationality
+        - jobStatus
+        - salaryRange
+        - familyStatus
+        - adults
+        - children
+        - arrivalStatus
+        - arrivalDate
+        - currentCity
+    ExtractProfileInput:
+      type: object
+      properties:
+        text:
+          type: string
+          minLength: 1
+        answers:
+          $ref: "#/components/schemas/MoveProfile"
+      required: [text]
+    GenerateMovePlanInput:
+      type: object
+      properties:
+        profile:
+          $ref: "#/components/schemas/MoveProfile"
+      required: [profile]
+    MoveTask:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        priority:
+          type: string
+          enum: [high, medium, low]
+        category:
+          type: string
+          enum: [visa, housing, job, bank, id-medical, community, sim]
+        scorePoints:
+          type: integer
+          minimum: 0
+          maximum: 100
+          multipleOf: 5
+        officialSource:
+          type: boolean
+      required: [id, title, description, priority, category, scorePoints, officialSource]
+    CostLine:
+      type: object
+      properties:
+        category:
+          type: string
+        lowAed:
+          type: integer
+          minimum: 0
+        highAed:
+          type: integer
+          minimum: 0
+      required: [category, lowAed, highAed]
+    MovePlan:
+      type: object
+      properties:
+        beforeArrival:
+          type: array
+          items:
+            $ref: "#/components/schemas/MoveTask"
+        week1:
+          type: array
+          items:
+            $ref: "#/components/schemas/MoveTask"
+        week2:
+          type: array
+          items:
+            $ref: "#/components/schemas/MoveTask"
+        estimatedFirstMonthCost:
+          type: integer
+          minimum: 0
+        costBreakdown:
+          type: array
+          items:
+            $ref: "#/components/schemas/CostLine"
+        costNote:
+          type: string
+      required: [beforeArrival, week1, week2, estimatedFirstMonthCost, costBreakdown, costNote]
+    MoveMateChatInput:
+      type: object
+      properties:
+        message:
+          type: string
+          minLength: 1
+        profile:
+          $ref: "#/components/schemas/MoveProfile"
+        plan:
+          $ref: "#/components/schemas/MovePlan"
+        completedTaskIds:
+          type: array
+          items:
+            type: string
+        conversationHistory:
+          type: array
+          maxItems: 12
+          items:
+            type: object
+            properties:
+              role:
+                type: string
+                enum: [user, assistant]
+              text:
+                type: string
+            required: [role, text]
+      required: [message, profile, plan, completedTaskIds]
+    MoveMateChatResponse:
+      type: object
+      properties:
+        reply:
+          type: string
+        aiPowered:
+          type: boolean
+        intent:
+          type: string
+          enum: [next-step, bank, visa, task-completed, general]
+        completedTaskIds:
+          type: array
+          items:
+            type: string
+        nextTask:
+          oneOf:
+            - $ref: "#/components/schemas/MoveTask"
+            - type: "null"
+        settlementScore:
+          type: integer
+          minimum: 0
+          maximum: 100
+      required: [reply, aiPowered, intent, completedTaskIds, nextTask, settlementScore]

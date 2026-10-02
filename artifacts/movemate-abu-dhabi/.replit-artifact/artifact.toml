@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "MoveMate Abu Dhabi"
+description = "A mobile-first relocation assistant that helps people plan their move to Abu Dhabi. Phase one includes a guided onboarding flow, a demo persona, and the dashboard foundation for a personalized move plan."
+version = "1.0.0"
+id = "artifacts/movemate-abu-dhabi"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24218
+
+[services.development]
+run = "pnpm --filter @workspace/movemate-abu-dhabi run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/movemate-abu-dhabi", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/movemate-abu-dhabi/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24218"
+BASE_PATH = "/"

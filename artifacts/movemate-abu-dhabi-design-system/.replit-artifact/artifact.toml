@@ -1,0 +1,19 @@
+kind = "design-system"
+previewPath = "/movemate-abu-dhabi-design-system/"
+title = "MoveMate Abu Dhabi Design System"
+description = "Reusable design tokens and UI components extracted from MoveMate Abu Dhabi, with light and dark themes and a living style-guide preview."
+version = "1.0.0"
+id = "artifacts/movemate-abu-dhabi-design-system"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/movemate-abu-dhabi-design-system/" ]
+localPort = 22818
+
+[services.development]
+run = "pnpm --filter @workspace/movemate-abu-dhabi-design-system run dev"
+
+[services.env]
+PORT = "22818"
+BASE_PATH = "/movemate-abu-dhabi-design-system/"
