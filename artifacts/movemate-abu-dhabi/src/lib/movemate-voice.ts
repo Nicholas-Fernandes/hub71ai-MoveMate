@@ -37,7 +37,7 @@ function recordingFor(text: string) {
   ];
   return patterns.find(([pattern]) => pattern.test(text))?.[1] ?? 'generic';
 }
-export function sayMoveMate(text: string, enabled: boolean, onSpeaking: (value: boolean) => void) {
+export function sayMoveMate(text: string, enabled: boolean, onSpeaking: (value: boolean) => void, preferBrowser = false) {
   stopMoveMateSpeech();
   if (!enabled || !text.trim()) { onSpeaking(false); return; }
   const id = requestId;
@@ -62,6 +62,8 @@ export function sayMoveMate(text: string, enabled: boolean, onSpeaking: (value: 
     player.onerror = () => { if (current()) { onSpeaking(false); report('Audio unavailable · open this link in Chrome or Safari'); } };
     void player.play().catch(() => { if (current()) { onSpeaking(false); report('Audio blocked · tap Play voice to enable sound'); } });
   };
+  // Demo playback starts immediately; browser speech remains explicitly testable.
+  if (!preferBrowser) { fallback('Demo voice ready'); return; }
   const synth = window.speechSynthesis;
   if (!synth || typeof SpeechSynthesisUtterance === 'undefined') { fallback('Browser speech unavailable'); return; }
   // Short chunks keep lengthy replies from stalling on device speech engines.

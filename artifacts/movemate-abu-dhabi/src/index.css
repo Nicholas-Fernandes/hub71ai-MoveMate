@@ -380,3 +380,8 @@ body { min-width: 320px; }
   .chat-header .chat-voice-toggle { min-width: 34px; }
   .chat-header .chat-voice-toggle span { display: none; }
 }
+
+.voice-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin-top: 8px; }
+.voice-tools .voice-status { flex: 1; min-width: 160px; margin: 0; }
+.browser-voice-test { border: 1px solid #cdd7ce; border-radius: 8px; padding: 6px 8px; font-size: 12px; color: #315f55; background: #fffdf7; }
+.chat-voice-tools { padding: 6px 16px; margin: 0; }
