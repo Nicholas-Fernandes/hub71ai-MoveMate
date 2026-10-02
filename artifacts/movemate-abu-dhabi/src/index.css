@@ -366,3 +366,17 @@ body { min-width: 320px; }
 .onboard-companion { grid-template-columns: 86px 1fr 86px; }
 .voice-toggle { width: 84px; gap: 4px; font-size: 11px; display: inline-flex; align-items: center; justify-content: center; }
 .chat-header .chat-voice-toggle { width: auto; min-width: 76px; gap: 4px; font-size: 11px; display: inline-flex; align-items: center; }
+
+.voice-status { font-size: 12px; line-height: 1.5; margin: 8px 0; color: #5f6268; }
+.chat-voice-status { padding: 0 16px; margin: 4px 0; }
+/* Keep the animated face and its mouth inside the avatar, away from the name. */
+.chat-avatar { position: relative; isolation: isolate; }
+.chat-header > div:nth-child(2) { min-width: 0; }
+.chat-header strong { line-height: 1.25; overflow-wrap: anywhere; }
+.chat-header button { flex-shrink: 0; }
+.assistant-launcher.is-open.mascot-speaking::after { display: none; }
+@media (max-width: 420px) {
+  .chat-header { gap: 7px; padding: 12px; }
+  .chat-header .chat-voice-toggle { min-width: 34px; }
+  .chat-header .chat-voice-toggle span { display: none; }
+}
